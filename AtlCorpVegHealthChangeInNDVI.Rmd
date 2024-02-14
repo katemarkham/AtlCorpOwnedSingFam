@@ -1,0 +1,236 @@
+---
+title: "AtlCorpVegHealthChangeInNDVI"
+author: "Kate Markham"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+
+## SETUP
+***
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Packages needed to complete this script
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+library(knitr)
+library(data.table)
+library(dplyr)
+library(tidyverse)
+library(qpcR)
+library(ggplot2)
+```
+
+Import spreadsheets from Google Earth Engine 
+```{r echo=TRUE, include = FALSE, message=FALSE, warning=FALSE}
+NAIPAB<-read_csv("BrowningGreeningStats20092023AB.csv")
+NAIPCG<-read_csv("BrowningGreeningStats20092023CG.csv")
+NAIPHL<-read_csv("BrowningGreeningStats20092023HL.csv")
+NAIPMP<-read_csv("BrowningGreeningStats20092023MP.csv")
+NAIPRW<-read_csv("BrowningGreeningStats20092023RW.csv")
+l=list(NAIPAB,NAIPCG,NAIPHL,NAIPMP,NAIPRW)
+AllNAIP<-rbindlist(l, fill=FALSE, idcol=NULL)
+```
+
+
+Import Neighborhood Stats spreadsheet
+```{r }
+AtlStats<-read_csv("AtlNeighborhoodStats2021Parcels.csv")
+#head(AtlStats)
+
+#Select columns to be joined with NAIP dataset
+AtlStats_sel<-AtlStats %>%
+   dplyr::select(NAME_1,ProportionSingFamParcelsCorpSspct,ProportionSingleFamilyAreaCorpSspct,ProportionNeighborhoodAreaCorpSspct,NeighborhoodAreaFt,CorpSspct_AreaFeetMean)
+
+#Join the neighborhood stats data to the NAIP dataset
+NAIP<-AllNAIP %>%
+  left_join(AtlStats_sel)%>%
+  dplyr::select(NAME_1,OBJECTID,NonHispani,BrowningFraction, BrowningSqKm,  GreeningFraction, GreeningSqKm, browning, greening,PARCELID, LNDVALUE, ProportionSingFamParcelsCorpSspct,ProportionSingleFamilyAreaCorpSspct,ProportionNeighborhoodAreaCorpSspct,NeighborhoodAreaFt,CorpSspct_AreaFeetMean, SITEZIP,PSTLSTATE)
+```
+
+Rename columns and convert some proportions to percentages for accessibility
+```{r}
+head(NAIP)
+
+#Convert from proportion to percentage
+NAIP<-NAIP %>%
+  mutate(PercentSingFamParcels =(ProportionSingFamParcelsCorpSspct)*100) %>%
+  mutate(PercentSingFamArea =(ProportionSingleFamilyAreaCorpSspct)*100) %>%
+  mutate(PercentNeighborhoodArea =(ProportionNeighborhoodAreaCorpSspct)*100) %>%
+  #rename columns
+  mutate(PercentNeighborhoodBlack = NonHispani) %>%
+  mutate(AvgAreaFeet = CorpSspct_AreaFeetMean) %>%
+  mutate(NeighborhoodArea = NeighborhoodAreaFt)
+```
+
+## Data Visualization
+***
+Visualize the data in simple line plots
+```{r echo=FALSE}
+plot<-ggplot(NAIP, aes(PercentSingFamParcels,PercentNeighborhoodBlack)) + 
+  geom_point()
+plot+labs(title="Percent of Single Family Parcels that Are Corporate Owned \n by Percentage of the Neighborhood that is Black" )
+
+plot1<-ggplot(NAIP, aes(PercentNeighborhoodBlack, GreeningFraction)) + 
+  geom_point()
+plot1+labs(title="Fraction of Parcels That Increased in NDVI \n by Percentage of the Neighborhood that is Black" )
+
+plot2<-ggplot(NAIP, aes(PercentSingFamArea, BrowningFraction)) + 
+  geom_point()
+plot2+labs(title="Fraction of Parcels That Decreased in NDVI  by Percent of \n Neighborhood Area Corporate Owned" )
+
+plot3<-ggplot(NAIP, aes(PercentSingFamArea, GreeningFraction)) + 
+  geom_point()
+plot3+labs(title="Fraction of Parcels That Increased in NDVI by Percent of \n Neighborhood Area Corporate Owned" )
+
+plot4<-ggplot(NAIP, aes(PSTLSTATE, GreeningFraction)) + 
+  geom_point()
+plot4+labs(title="Fraction of Parcels That Increased in NDVI by Tax of \n Payer's State" )
+
+plot5<-ggplot(NAIP, aes(LNDVALUE, GreeningFraction)) + 
+  geom_point()
+plot5+labs(title="Fraction of Parcels That Increased in NDVI by Land Value" )
+
+plot5<-ggplot(NAIP, aes(LNDVALUE, BrowningFraction)) + 
+  geom_point()
+plot5+labs(title="Fraction of Parcels That Decreased in NDVI by Land Value" )
+```
+
+## PREPROCESSING
+***
+
+- Check for correlation
+- normalize data
+- and check data is normally distributed
+
+Select columns of interest
+```{r include=FALSE}
+NAIP2 <-NAIP %>%
+  dplyr::select(GreeningFraction, GreeningSqKm, greening, BrowningFraction, BrowningSqKm, browning, PercentNeighborhoodBlack, AvgAreaFeet,NeighborhoodArea, PercentNeighborhoodArea, PercentSingFamArea, PercentSingFamParcels, PSTLSTATE, LNDVALUE, NAME_1)
+head(NAIP2)
+
+```
+
+Check for correlation (Pearson's correlation)
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+# Check for correlation on data using correlation matrix
+library(car)
+library(Hmisc)
+library(ggcorrplot)
+
+NAIP_corr<-NAIP2 %>%
+  dplyr::select(GreeningFraction, GreeningSqKm, greening, BrowningFraction, BrowningSqKm, browning, PercentNeighborhoodBlack, AvgAreaFeet,NeighborhoodArea, PercentNeighborhoodArea, PercentSingFamArea, PercentSingFamParcels, LNDVALUE)
+
+#Compute correlation rounded to one decimal place
+corr<-round(cor(NAIP_corr),1)
+# Compute a matrix of correlation p-values
+p.mat <- cor_pmat(NAIP_corr)
+
+ggcorrplot(corr, hc.order=TRUE,lab = TRUE, legend.title = "Correlation",)
+```
+
+Remove correlated variables and normalize data
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#Remove variables and double check no correlation
+NAIP2_corr<-NAIP2 %>%
+  dplyr::select(GreeningFraction, GreeningSqKm, BrowningFraction, BrowningSqKm, PercentNeighborhoodBlack, AvgAreaFeet,NeighborhoodArea, PercentNeighborhoodArea, PercentSingFamParcels, LNDVALUE)
+
+library(psych)
+library(ggcorrplot)
+
+corr.test(NAIP2_corr,y=NULL,method="pearson",use="pairwise")
+
+#Compute correlation rounded to one decimal place
+corr<-round(cor(NAIP2_corr, method="pearson", use="all.obs"),1)
+
+#Plot correlation matrix
+ggcorrplot(corr, hc.order=TRUE,lab = TRUE, legend.title = "Correlation",)
+# 
+# 
+# ##Data to be modeled with no correlated variables
+ NAIP_Model<-NAIP2 %>%
+    dplyr::select(NAME_1,GreeningFraction, GreeningSqKm, BrowningFraction, BrowningSqKm, PercentNeighborhoodBlack, AvgAreaFeet,NeighborhoodArea, PercentNeighborhoodArea, PercentSingFamParcels, LNDVALUE)
+
+
+##Normalize the data
+NAIP_Model_Normalized<- NAIP_Model
+NAIP_Model_Normalized[,2:11]<-scale(NAIP_Model_Normalized[,2:11]) #includes second and 11th columns
+```
+***
+Normality tests. P-value larger than 0.05 indicates data is normal. Points fall on the line when data is normal on the qqplots.
+
+### Normality test: Fraction of parcels that are greening
+```{r echo=FALSE}
+hist(NAIP_Model_Normalized$GreeningFraction) 
+ggplot(NAIP_Model_Normalized,aes(x=GreeningFraction)) + geom_histogram()
+qqnorm(NAIP_Model_Normalized$GreeningFraction); qqline(NAIP_Model_Normalized$GreeningFraction)
+shapiro.test(NAIP_Model_Normalized$GreeningFraction)
+```
+### Normality test: Fraction of parcels that are browning
+```{r echo=FALSE}
+hist(NAIP_Model_Normalized$BrowningFraction) 
+ggplot(NAIP_Model_Normalized,aes(x=BrowningFraction)) + geom_histogram()
+qqnorm(NAIP_Model_Normalized$BrowningFraction); qqline(NAIP_Model_Normalized$BrowningFraction)
+shapiro.test(NAIP_Model_Normalized$BrowningFraction)
+```
+### Normality test: Area (sq km) of parcels that are browning
+```{r echo=FALSE}
+hist(NAIP_Model_Normalized$BrowningSqKm) 
+ggplot(NAIP_Model_Normalized,aes(x=BrowningSqKm)) + geom_histogram()
+qqnorm(NAIP_Model_Normalized$BrowningSqKm); qqline(NAIP_Model_Normalized$BrowningSqKm)
+shapiro.test(NAIP_Model_Normalized$BrowningSqKm)
+```
+### Normality test: NDVI in 2015
+```{r echo=FALSE}
+hist(NAIP_Model_Normalized$NDVI_15) 
+ggplot(NAIP_Model_Normalized,aes(x=NDVI_15)) + geom_histogram()
+qqnorm(NAIP_Model_Normalized$NDVI_15); qqline(NAIP_Model_Normalized$NDVI_15)
+shapiro.test(NAIP_Model_Normalized$NDVI_15)
+```
+***None of the potential dependent variables are normally distributed.***
+
+## Linear Regression
+***
+Linear regression with the fraction of parcels that increased NDVI as dependent variable
+```{r echo=FALSE}
+#fit linear regression model with no interactions
+model1 <- lm(GreeningFraction ~ PercentNeighborhoodBlack + PercentSingFamParcels + AvgAreaFeet, data=NAIP_Model_Normalized)
+
+summary(model1)
+
+```
+Same model with interactions 
+```{r echo=FALSE}
+#fit linear regression model with interactions
+model2 <- lm(GreeningFraction ~ PercentNeighborhoodBlack * PercentSingFamParcels * AvgAreaFeet, data=NAIP_Model_Normalized)
+
+summary(model2)
+```
+## Random Forest
+ Random forest modeling the fraction of parcels that are greening
+```{r}
+library(randomForest)
+library(caTools)
+
+#Split into training and testing
+set.seed(123)
+split = sample.split(NAIP_Model_Normalized$GreeningFraction, SplitRatio = 0.70)
+training_set = subset(NAIP_Model_Normalized, split == TRUE)
+test_set = subset(NAIP_Model_Normalized, split == FALSE)
+
+#Train the model using the training data
+class(training_set$GreeningFraction)
+RF=randomForest(GreeningFraction ~ BrowningFraction + BrowningSqKm + NDVI_15 + PercentNeighborhoodBlack + PercentSingFamParcels + PercentSingFamArea + AvgAreaFeet, data=training_set, ntree=50000, importance=TRUE, proximity = TRUE)
+
+#Report model stats
+RF
+#Report importance factors and produce VIF plot for model
+importance(RF)
+varImpPlot(RF)
+```
+
